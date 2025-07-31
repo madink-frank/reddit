@@ -1,0 +1,303 @@
+name: Release - Create and Deploy Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    name: Validate Release
+    
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Get version
+      id: get-version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+        else
+          VERSION=${GITHUB_REF#refs/tags/}
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Release version: $VERSION"
+        
+    - name: Validate version format
+      run: |
+        VERSION="${{ steps.get-version.outputs.version }}"
+        if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Invalid version format: $VERSION"
+          echo "Expected format: v1.0.0"
+          exit 1
+        fi
+
+  test-release:
+    needs: validate-release
+    runs-on: ubuntu-latest
+    name: Test Release Build
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Set up test environment variables
+      run: |
+        echo "DATABASE_URL=postgresql://test_user:test_password@localhost:5432/test_db" >> $GITHUB_ENV
+        echo "REDIS_URL=redis://localhost:6379" >> $GITHUB_ENV
+        echo "CELERY_BROKER_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+        echo "CELERY_RESULT_BACKEND=redis://localhost:6379/0" >> $GITHUB_ENV
+        echo "JWT_SECRET_KEY=test-secret-key-for-ci" >> $GITHUB_ENV
+        echo "REDDIT_CLIENT_ID=test_client_id" >> $GITHUB_ENV
+        echo "REDDIT_CLIENT_SECRET=test_client_secret" >> $GITHUB_ENV
+        echo "ENVIRONMENT=testing" >> $GITHUB_ENV
+        
+    - name: Run database migrations
+      run: |
+        alembic upgrade head
+        
+    - name: Run full test suite
+      run: |
+        pytest -v --tb=short --cov=app --cov-report=term-missing
+
+  build-release:
+    needs: [validate-release, test-release]
+    runs-on: ubuntu-latest
+    name: Build Release Artifacts
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Docker Hub
+      if: github.event_name != 'workflow_dispatch'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.production
+        push: ${{ github.event_name != 'workflow_dispatch' }}
+        tags: |
+          ${{ secrets.DOCKER_USERNAME }}/reddit-content-platform:${{ needs.validate-release.outputs.version }}
+          ${{ secrets.DOCKER_USERNAME }}/reddit-content-platform:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Create release archive
+      run: |
+        VERSION="${{ needs.validate-release.outputs.version }}"
+        tar -czf reddit-content-platform-$VERSION.tar.gz \
+          --exclude='.git' \
+          --exclude='.pytest_cache' \
+          --exclude='__pycache__' \
+          --exclude='.venv' \
+          --exclude='*.pyc' \
+          .
+          
+    - name: Upload release artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: release-archive
+        path: reddit-content-platform-*.tar.gz
+
+  deploy-production:
+    needs: [validate-release, test-release, build-release]
+    runs-on: ubuntu-latest
+    name: Deploy to Production
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Railway CLI
+      run: |
+        npm install -g @railway/cli
+        
+    - name: Deploy to Railway Production
+      env:
+        RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+      run: |
+        railway login --token $RAILWAY_TOKEN
+        railway up --detach
+        
+    - name: Wait for deployment
+      run: |
+        echo "Waiting for production deployment to complete..."
+        sleep 90
+        
+    - name: Run production database migrations
+      env:
+        RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+      run: |
+        railway login --token $RAILWAY_TOKEN
+        railway run alembic upgrade head
+        
+    - name: Production health check
+      env:
+        RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+      run: |
+        railway login --token $RAILWAY_TOKEN
+        PRODUCTION_URL=$(railway domain | grep -o 'https://[^[:space:]]*' | head -1)
+        if [ -n "$PRODUCTION_URL" ]; then
+          echo "Checking production health at: $PRODUCTION_URL/health"
+          
+          # Wait for service to be fully ready
+          for i in {1..10}; do
+            if curl -f "$PRODUCTION_URL/health"; then
+              echo "Production deployment successful!"
+              echo "Production URL: $PRODUCTION_URL"
+              echo "API Documentation: $PRODUCTION_URL/docs"
+              break
+            else
+              echo "Attempt $i failed, retrying in 30 seconds..."
+              sleep 30
+            fi
+          done
+        else
+          echo "Could not determine production URL"
+          exit 1
+        fi
+
+  create-github-release:
+    needs: [validate-release, deploy-production]
+    runs-on: ubuntu-latest
+    name: Create GitHub Release
+    if: github.event_name != 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Download release archive
+      uses: actions/download-artifact@v3
+      with:
+        name: release-archive
+        
+    - name: Generate changelog
+      id: changelog
+      run: |
+        VERSION="${{ needs.validate-release.outputs.version }}"
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        
+        echo "## What's Changed" > changelog.md
+        echo "" >> changelog.md
+        
+        if [ -n "$PREVIOUS_TAG" ]; then
+          echo "### Commits since $PREVIOUS_TAG:" >> changelog.md
+          git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD >> changelog.md
+        else
+          echo "### Initial Release" >> changelog.md
+          echo "- First release of Reddit Content Platform" >> changelog.md
+        fi
+        
+        echo "" >> changelog.md
+        echo "## Deployment Information" >> changelog.md
+        echo "- **Version**: $VERSION" >> changelog.md
+        echo "- **Build Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> changelog.md
+        echo "- **Commit**: ${{ github.sha }}" >> changelog.md
+        
+        # Set output for release body
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        cat changelog.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ needs.validate-release.outputs.version }}
+        release_name: Release ${{ needs.validate-release.outputs.version }}
+        body: ${{ steps.changelog.outputs.changelog }}
+        draft: false
+        prerelease: false
+        
+    - name: Upload release archive to GitHub
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./reddit-content-platform-${{ needs.validate-release.outputs.version }}.tar.gz
+        asset_name: reddit-content-platform-${{ needs.validate-release.outputs.version }}.tar.gz
+        asset_content_type: application/gzip
+
+  notify-release:
+    needs: [validate-release, deploy-production, create-github-release]
+    runs-on: ubuntu-latest
+    name: Notify Release Completion
+    if: always()
+    
+    steps:
+    - name: Notify Success
+      if: needs.deploy-production.result == 'success'
+      run: |
+        echo "🎉 Release ${{ needs.validate-release.outputs.version }} deployed successfully!"
+        echo "Production is now running the latest version."
+        
+    - name: Notify Failure
+      if: needs.deploy-production.result == 'failure'
+      run: |
+        echo "❌ Release ${{ needs.validate-release.outputs.version }} deployment failed!"
+        echo "Please check the logs and fix any issues."
+        exit 1

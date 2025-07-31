@@ -1,0 +1,253 @@
+/**
+ * Optimized CSS Index
+ * 
+ * This file manages the loading of critical and non-critical CSS
+ * for optimal performance.
+ */
+
+/* Critical CSS - Loaded synchronously */
+@import './critical.css';
+
+/* Design System Base - Critical parts only */
+@import '../design-system/colors.css' layer(critical);
+@import '../design-system/typography.css' layer(critical);
+@import '../design-system/spacing.css' layer(critical);
+
+/* Base styles - Critical CSS only */
+
+/* Non-critical CSS - Can be loaded asynchronously */
+@import './non-critical.css' layer(non-critical);
+
+/* Design System Components - Non-critical */
+@import '../design-system/components.css' layer(non-critical);
+@import '../design-system/animations.css' layer(non-critical);
+@import '../design-system/advanced-dashboard.css' layer(non-critical);
+
+/* CSS Layers for better organization and performance */
+@layer critical {
+  /* Critical styles are imported above and will be placed in this layer */
+}
+
+@layer non-critical {
+  /* Non-critical styles are imported above and will be placed in this layer */
+}
+
+/* Performance optimizations */
+@layer utilities {
+
+  /* GPU acceleration for animations */
+  .gpu-accelerated {
+    transform: translateZ(0);
+    will-change: transform;
+  }
+
+  /* Optimize font rendering */
+  .optimized-text {
+    font-display: swap;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Optimize images */
+  .optimized-image {
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+  }
+
+  /* Contain layout shifts */
+  .layout-contained {
+    contain: layout style paint;
+  }
+
+  /* Optimize scrolling */
+  .smooth-scroll {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Media queries for progressive enhancement */
+@media (min-width: 768px) {
+  /* Load additional styles for larger screens */
+  @import './non-critical.css' layer(enhanced);
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  /* Disable animations for users who prefer reduced motion */
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  /* Dark mode styles - loaded conditionally */
+  @import './dark-mode.css' layer(theme);
+}
+
+/* Print styles - loaded only when printing */
+@media print {
+  @import './print.css' layer(print);
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  :root {
+    --color-contrast-multiplier: 1.5;
+  }
+
+  .card,
+  .btn-primary,
+  .btn-secondary {
+    border-width: 2px;
+  }
+}
+
+/* Reduced data mode (future enhancement) */
+@media (prefers-reduced-data: reduce) {
+
+  /* Minimize data usage by reducing visual effects */
+  .animate-pulse,
+  .animate-spin,
+  .animate-bounce {
+    animation: none;
+  }
+
+  .shadow-lg,
+  .shadow-xl {
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+/* Container queries for component-level responsive design */
+@container (min-width: 320px) {
+  .card {
+    padding: var(--space-4);
+  }
+}
+
+@container (min-width: 768px) {
+  .card {
+    padding: var(--space-6);
+  }
+}
+
+/* Feature queries for progressive enhancement */
+@supports (display: grid) {
+  .grid-fallback {
+    display: grid;
+  }
+}
+
+@supports (backdrop-filter: blur(10px)) {
+  .modal-overlay {
+    backdrop-filter: blur(10px);
+    background-color: rgba(0, 0, 0, 0.3);
+  }
+}
+
+@supports (color-scheme: light dark) {
+  :root {
+    color-scheme: light dark;
+  }
+}
+
+/* CSS Custom Properties for runtime optimization */
+:root {
+  /* Performance-related custom properties */
+  --animation-duration-fast: 150ms;
+  --animation-duration-normal: 300ms;
+  --animation-duration-slow: 500ms;
+
+  --easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --easing-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --easing-accelerate: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Layout optimization */
+  --content-max-width: 1280px;
+  --sidebar-width: 256px;
+  --header-height: 64px;
+
+  /* Z-index management */
+  --z-base: 0;
+  --z-dropdown: 1000;
+  --z-modal: 1400;
+  --z-tooltip: 1800;
+}
+
+/* Critical path optimization */
+.above-fold {
+  /* Styles for above-the-fold content */
+  contain: layout style;
+  will-change: auto;
+}
+
+.below-fold {
+  /* Styles for below-the-fold content */
+  content-visibility: auto;
+  contain-intrinsic-size: 0 500px;
+}
+
+/* Intersection observer optimization */
+.lazy-load {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity var(--animation-duration-normal) var(--easing-standard),
+    transform var(--animation-duration-normal) var(--easing-standard);
+}
+
+.lazy-load.loaded {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Resource hints for better loading performance */
+.preload-font {
+  font-display: swap;
+}
+
+.preload-image {
+  /* Use HTML attributes: loading="lazy" decoding="async" */
+  image-rendering: auto;
+  max-width: 100%;
+  height: auto;
+}
+
+/* CSS containment for performance */
+.component-container {
+  contain: layout style paint;
+}
+
+.isolated-component {
+  contain: layout style paint size;
+}
+
+/* Optimize repaints and reflows */
+.optimized-animation {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.optimized-animation.complete {
+  will-change: auto;
+}
+
+/* Memory optimization */
+.memory-efficient {
+  contain: strict;
+  content-visibility: auto;
+}
+
+/* Network optimization hints */
+.critical-resource {
+  /* Mark as critical for resource prioritization - use fetchpriority="high" in HTML */
+  position: relative;
+}
+
+.non-critical-resource {
+  /* Mark as non-critical for resource prioritization - use fetchpriority="low" in HTML */
+  position: relative;
+}

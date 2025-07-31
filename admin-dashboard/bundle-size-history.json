@@ -1,0 +1,30 @@
+[
+  {
+    "timestamp": "2025-07-29T18:17:01.585Z",
+    "totalSize": 2063302,
+    "totalGzipSize": 618974,
+    "fileCount": 31,
+    "categories": {
+      "data": {
+        "totalSize": 10469,
+        "count": 1
+      },
+      "css": {
+        "totalSize": 54695,
+        "count": 1
+      },
+      "javascript": {
+        "totalSize": 1995335,
+        "count": 27
+      },
+      "html": {
+        "totalSize": 1306,
+        "count": 1
+      },
+      "image": {
+        "totalSize": 1497,
+        "count": 1
+      }
+    }
+  }
+]

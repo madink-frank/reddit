@@ -1,0 +1,221 @@
+name: PR Preview - Deploy Preview Environment
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Test PR Changes
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout PR code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Set up test environment variables
+      run: |
+        echo "DATABASE_URL=postgresql://test_user:test_password@localhost:5432/test_db" >> $GITHUB_ENV
+        echo "REDIS_URL=redis://localhost:6379" >> $GITHUB_ENV
+        echo "CELERY_BROKER_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+        echo "CELERY_RESULT_BACKEND=redis://localhost:6379/0" >> $GITHUB_ENV
+        echo "JWT_SECRET_KEY=test-secret-key-for-ci" >> $GITHUB_ENV
+        echo "REDDIT_CLIENT_ID=test_client_id" >> $GITHUB_ENV
+        echo "REDDIT_CLIENT_SECRET=test_client_secret" >> $GITHUB_ENV
+        echo "ENVIRONMENT=testing" >> $GITHUB_ENV
+        
+    - name: Run database migrations
+      run: |
+        alembic upgrade head
+        
+    - name: Run tests with coverage
+      run: |
+        pytest --cov=app --cov-report=xml --cov-report=term-missing -v
+        
+    - name: Comment PR with test results
+      uses: actions/github-script@v6
+      if: always()
+      with:
+        script: |
+          const fs = require('fs');
+          const { execSync } = require('child_process');
+          
+          // Get test results
+          let testStatus = '${{ job.status }}';
+          let message = '';
+          
+          if (testStatus === 'success') {
+            message = '✅ **Tests Passed**\n\nAll tests are passing for this PR.';
+          } else {
+            message = '❌ **Tests Failed**\n\nSome tests are failing. Please check the logs.';
+          }
+          
+          // Add coverage info if available
+          try {
+            const coverage = execSync('coverage report --format=markdown', { encoding: 'utf8' });
+            message += '\n\n## Coverage Report\n\n```\n' + coverage + '\n```';
+          } catch (e) {
+            // Coverage report not available
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: message
+          });
+
+  deploy-preview:
+    needs: test
+    runs-on: ubuntu-latest
+    name: Deploy Preview Environment
+    if: needs.test.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+    
+    steps:
+    - name: Checkout PR code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+      
+    - name: Install Railway CLI
+      run: |
+        npm install -g @railway/cli
+        
+    - name: Deploy Preview to Railway
+      env:
+        RAILWAY_TOKEN: ${{ secrets.RAILWAY_PREVIEW_TOKEN }}
+      run: |
+        railway login --token $RAILWAY_TOKEN
+        
+        # Create a unique service name for this PR
+        PR_NUMBER=${{ github.event.pull_request.number }}
+        SERVICE_NAME="reddit-platform-pr-$PR_NUMBER"
+        
+        # Deploy to a preview environment
+        railway up --service $SERVICE_NAME --detach
+        
+        # Get the preview URL
+        PREVIEW_URL=$(railway domain --service $SERVICE_NAME | grep -o 'https://[^[:space:]]*' | head -1)
+        echo "PREVIEW_URL=$PREVIEW_URL" >> $GITHUB_ENV
+        
+    - name: Wait for preview deployment
+      run: |
+        echo "Waiting for preview deployment to complete..."
+        sleep 45
+        
+    - name: Health check preview
+      run: |
+        if [ -n "$PREVIEW_URL" ]; then
+          echo "Checking preview health at: $PREVIEW_URL/health"
+          curl -f "$PREVIEW_URL/health" || exit 1
+          echo "Preview deployment successful!"
+        fi
+        
+    - name: Comment PR with preview link
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const previewUrl = process.env.PREVIEW_URL;
+          
+          if (previewUrl) {
+            const message = `🚀 **Preview Deployment Ready**
+            
+            Your PR has been deployed to a preview environment:
+            
+            - **Preview URL**: ${previewUrl}
+            - **API Docs**: ${previewUrl}/docs
+            - **Health Check**: ${previewUrl}/health
+            
+            The preview will be automatically cleaned up when the PR is closed.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });
+          }
+
+  cleanup-preview:
+    runs-on: ubuntu-latest
+    name: Cleanup Preview Environment
+    if: github.event.action == 'closed'
+    
+    steps:
+    - name: Install Railway CLI
+      run: |
+        npm install -g @railway/cli
+        
+    - name: Cleanup Preview Deployment
+      env:
+        RAILWAY_TOKEN: ${{ secrets.RAILWAY_PREVIEW_TOKEN }}
+      run: |
+        railway login --token $RAILWAY_TOKEN
+        
+        PR_NUMBER=${{ github.event.pull_request.number }}
+        SERVICE_NAME="reddit-platform-pr-$PR_NUMBER"
+        
+        # Remove the preview service
+        railway service delete $SERVICE_NAME --yes || echo "Service may not exist"
+        
+    - name: Comment PR cleanup
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const message = '🧹 **Preview Environment Cleaned Up**\n\nThe preview deployment for this PR has been removed.';
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: message
+          });

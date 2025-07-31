@@ -1,0 +1,46 @@
+{
+  "timestamp": "2025-07-31T16:22:03.995594",
+  "services": {
+    "admin_dashboard": {
+      "name": "관리자 대시보드",
+      "url": "https://admin-dashboard-ccbe8yd34-frank-chas-projects.vercel.app",
+      "status": "WARNING",
+      "response_time": 86.97,
+      "status_code": 401,
+      "error": "예상하지 못한 상태코드: 401"
+    },
+    "public_blog": {
+      "name": "공개 블로그",
+      "url": "https://admin-dashboard-gj0hsl2yl-frank-chas-projects.vercel.app",
+      "status": "WARNING",
+      "response_time": 67.52,
+      "status_code": 401,
+      "error": "예상하지 못한 상태코드: 401"
+    },
+    "postgres_db": {
+      "name": "PostgreSQL 데이터베이스",
+      "url": "https://postgres-production-30e0.up.railway.app",
+      "status": "SUCCESS",
+      "response_time": 213.1,
+      "status_code": 404,
+      "error": null
+    },
+    "redis_cache": {
+      "name": "Redis 캐시",
+      "url": "https://redis-production-3a49.up.railway.app",
+      "status": "SUCCESS",
+      "response_time": 231.24,
+      "status_code": 404,
+      "error": null
+    },
+    "backend_api": {
+      "status": "SKIPPED",
+      "error": "URL not configured"
+    },
+    "reddit_api": {
+      "status": "SKIPPED",
+      "error": "Backend API URL not configured"
+    }
+  },
+  "overall_status": "WARNING"
+}

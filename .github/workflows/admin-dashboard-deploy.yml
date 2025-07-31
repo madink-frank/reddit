@@ -1,0 +1,296 @@
+name: Admin Dashboard - Deploy
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'admin-dashboard/**'
+      - '.github/workflows/admin-dashboard-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+      platform:
+        description: 'Deployment platform'
+        required: true
+        default: 'vercel'
+        type: choice
+        options:
+        - vercel
+        - railway
+        - netlify
+
+env:
+  NODE_VERSION: "18"
+  WORKING_DIRECTORY: "./admin-dashboard"
+
+defaults:
+  run:
+    working-directory: ${{ env.WORKING_DIRECTORY }}
+
+jobs:
+  pre-deploy-checks:
+    runs-on: ubuntu-latest
+    name: Pre-deployment Checks
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Type check
+      run: npm run type-check
+      
+    - name: Lint check
+      run: npm run lint
+      
+    - name: Run tests
+      run: npm run test:run
+      
+    - name: Build application
+      run: |
+        if [ "${{ github.event.inputs.environment || 'production' }}" = "staging" ]; then
+          npm run build:staging
+        else
+          npm run build:prod
+        fi
+      env:
+        VITE_NODE_ENV: ${{ github.event.inputs.environment || 'production' }}
+        VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+        VITE_WS_URL: ${{ secrets.VITE_WS_URL }}
+        VITE_REDDIT_CLIENT_ID: ${{ secrets.VITE_REDDIT_CLIENT_ID }}
+        VITE_REDDIT_REDIRECT_URI: ${{ secrets.VITE_REDDIT_REDIRECT_URI }}
+        VITE_ADMIN_USERNAMES: ${{ secrets.VITE_ADMIN_USERNAMES }}
+        VITE_ENABLE_ANALYTICS: true
+        VITE_ENABLE_NOTIFICATIONS: true
+        VITE_ENABLE_DEV_TOOLS: ${{ github.event.inputs.environment == 'staging' }}
+        VITE_KEEP_CONSOLE: ${{ github.event.inputs.environment == 'staging' }}
+        VITE_ENABLE_PERFORMANCE_MONITORING: true
+        VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+        VITE_SENTRY_ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
+        
+    - name: Run bundle size check
+      run: npm run size-check
+
+  deploy-vercel:
+    needs: pre-deploy-checks
+    runs-on: ubuntu-latest
+    name: Deploy to Vercel
+    if: github.event.inputs.platform == 'vercel' || (github.event.inputs.platform == '' && github.event_name == 'push')
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Install Vercel CLI
+      run: npm install -g vercel@latest
+      
+    - name: Pull Vercel Environment Information
+      run: vercel pull --yes --environment=${{ github.event.inputs.environment || 'production' }} --token=${{ secrets.VERCEL_TOKEN }}
+      
+    - name: Build Project Artifacts
+      run: vercel build --token=${{ secrets.VERCEL_TOKEN }} ${{ github.event.inputs.environment == 'production' && '--prod' || '' }}
+      env:
+        VITE_NODE_ENV: ${{ github.event.inputs.environment || 'production' }}
+        VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+        VITE_WS_URL: ${{ secrets.VITE_WS_URL }}
+        VITE_REDDIT_CLIENT_ID: ${{ secrets.VITE_REDDIT_CLIENT_ID }}
+        VITE_REDDIT_REDIRECT_URI: ${{ secrets.VITE_REDDIT_REDIRECT_URI }}
+        VITE_ADMIN_USERNAMES: ${{ secrets.VITE_ADMIN_USERNAMES }}
+        VITE_ENABLE_ANALYTICS: true
+        VITE_ENABLE_NOTIFICATIONS: true
+        VITE_ENABLE_DEV_TOOLS: ${{ github.event.inputs.environment == 'staging' }}
+        VITE_KEEP_CONSOLE: ${{ github.event.inputs.environment == 'staging' }}
+        VITE_ENABLE_PERFORMANCE_MONITORING: true
+        VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+        VITE_SENTRY_ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
+        
+    - name: Deploy Project Artifacts to Vercel
+      run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }} ${{ github.event.inputs.environment == 'production' && '--prod' || '' }}
+
+  deploy-railway:
+    needs: pre-deploy-checks
+    runs-on: ubuntu-latest
+    name: Deploy to Railway
+    if: github.event.inputs.platform == 'railway'
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Install Railway CLI
+      run: npm install -g @railway/cli
+      
+    - name: Deploy to Railway
+      run: railway up --detach
+      env:
+        RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+  deploy-netlify:
+    needs: pre-deploy-checks
+    runs-on: ubuntu-latest
+    name: Deploy to Netlify
+    if: github.event.inputs.platform == 'netlify'
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build application
+      run: |
+        if [ "${{ github.event.inputs.environment || 'production' }}" = "staging" ]; then
+          npm run build:staging
+        else
+          npm run build:prod
+        fi
+      env:
+        VITE_NODE_ENV: ${{ github.event.inputs.environment || 'production' }}
+        VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+        VITE_WS_URL: ${{ secrets.VITE_WS_URL }}
+        VITE_REDDIT_CLIENT_ID: ${{ secrets.VITE_REDDIT_CLIENT_ID }}
+        VITE_REDDIT_REDIRECT_URI: ${{ secrets.VITE_REDDIT_REDIRECT_URI }}
+        VITE_ADMIN_USERNAMES: ${{ secrets.VITE_ADMIN_USERNAMES }}
+        VITE_ENABLE_ANALYTICS: true
+        VITE_ENABLE_NOTIFICATIONS: true
+        VITE_ENABLE_DEV_TOOLS: ${{ github.event.inputs.environment == 'staging' }}
+        VITE_KEEP_CONSOLE: ${{ github.event.inputs.environment == 'staging' }}
+        VITE_ENABLE_PERFORMANCE_MONITORING: true
+        VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+        VITE_SENTRY_ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
+        
+    - name: Deploy to Netlify
+      uses: nwtgck/actions-netlify@v3.0
+      with:
+        publish-dir: ${{ env.WORKING_DIRECTORY }}/dist
+        production-branch: main
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        deploy-message: "Deploy from GitHub Actions"
+        enable-pull-request-comment: false
+        enable-commit-comment: true
+        overwrites-pull-request-comment: true
+      env:
+        NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+
+  post-deploy-checks:
+    needs: [deploy-vercel, deploy-railway, deploy-netlify]
+    runs-on: ubuntu-latest
+    name: Post-deployment Checks
+    if: always() && (needs.deploy-vercel.result == 'success' || needs.deploy-railway.result == 'success' || needs.deploy-netlify.result == 'success')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps
+      
+    - name: Wait for deployment
+      run: sleep 30
+      
+    - name: Run smoke tests
+      run: |
+        # Add your deployment URL here
+        DEPLOYMENT_URL="${{ secrets.DEPLOYMENT_URL }}"
+        if [ -n "$DEPLOYMENT_URL" ]; then
+          curl -f "$DEPLOYMENT_URL" || exit 1
+          echo "✅ Deployment health check passed"
+        else
+          echo "⚠️ No deployment URL configured for health check"
+        fi
+      
+    - name: Run E2E tests against deployment
+      run: npm run test:e2e
+      env:
+        PLAYWRIGHT_BASE_URL: ${{ secrets.DEPLOYMENT_URL }}
+      continue-on-error: true
+
+  notify:
+    needs: [pre-deploy-checks, deploy-vercel, deploy-railway, deploy-netlify, post-deploy-checks]
+    runs-on: ubuntu-latest
+    name: Notify Deployment Status
+    if: always()
+    
+    steps:
+    - name: Notify Success
+      if: |
+        needs.pre-deploy-checks.result == 'success' && 
+        (needs.deploy-vercel.result == 'success' || 
+         needs.deploy-railway.result == 'success' || 
+         needs.deploy-netlify.result == 'success')
+      run: |
+        echo "✅ Admin Dashboard deployment to ${{ github.event.inputs.environment || 'production' }} successful!"
+        echo "Platform: ${{ github.event.inputs.platform || 'vercel' }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref_name }}"
+        
+    - name: Notify Failure
+      if: |
+        needs.pre-deploy-checks.result == 'failure' || 
+        (needs.deploy-vercel.result == 'failure' && 
+         needs.deploy-railway.result == 'failure' && 
+         needs.deploy-netlify.result == 'failure')
+      run: |
+        echo "❌ Admin Dashboard deployment to ${{ github.event.inputs.environment || 'production' }} failed!"
+        echo "Platform: ${{ github.event.inputs.platform || 'vercel' }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref_name }}"
+        exit 1
