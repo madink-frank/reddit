@@ -97,32 +97,21 @@ class RedisClient:
         """Initialize async Redis client with optimized connection pooling"""
         try:
             if not self._initialized:
-                # Create optimized connection pool for production load
+                # Create simplified connection pool to avoid port parsing issues
                 self.connection_pool = redis.ConnectionPool.from_url(
                     settings.REDIS_URL,
-                    # Connection pool settings optimized for production
-                    max_connections=50,  # Increased for higher concurrency
+                    # Basic connection pool settings
+                    max_connections=20,
                     retry_on_timeout=True,
                     retry_on_error=[redis.ConnectionError, redis.TimeoutError],
                     
-                    # Socket settings for better performance
-                    socket_connect_timeout=3,  # Reduced for faster failure detection
-                    socket_timeout=2,  # Reduced for faster operations
-                    socket_keepalive=True,
-                    socket_keepalive_options={
-                        'TCP_KEEPIDLE': 1,
-                        'TCP_KEEPINTVL': 3,
-                        'TCP_KEEPCNT': 5,
-                    },
-                    
-                    # Health check settings
-                    health_check_interval=15,  # More frequent health checks
+                    # Basic socket settings
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
                     
                     # Encoding settings
                     decode_responses=True,
                     encoding='utf-8',
-                    
-                    # Connection retry settings (handled by tenacity decorator)
                 )
                 
                 # Create Redis client with the optimized pool
