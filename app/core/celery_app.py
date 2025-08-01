@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 
 celery_app = Celery(
     "reddit_platform",
-    broker=settings.CELERY_BROKER_URL or settings.REDIS_URL,
-    backend=settings.CELERY_RESULT_BACKEND or settings.REDIS_URL,
+    broker=settings.REDIS_URL,
+    backend=settings.REDIS_URL,
     include=["app.workers.reddit_crawler", "app.workers.content_generator", "app.workers.monitoring"]
 )
 
@@ -45,56 +45,17 @@ celery_app.conf.update(
     task_default_retry_delay=60,  # 1 minute
     task_max_retries=3,
     
-    # Optimized transport options for Redis performance
+    # Simplified transport options to avoid port parsing issues
     broker_transport_options={
         'visibility_timeout': 3600,
-        'fanout_prefix': True,
-        'fanout_patterns': True,
-        'socket_keepalive': True,
-        'socket_keepalive_options': {
-            'TCP_KEEPIDLE': 1,
-            'TCP_KEEPINTVL': 3,
-            'TCP_KEEPCNT': 5,
-        },
         'retry_on_timeout': True,
-        'health_check_interval': 15,  # More frequent health checks
-        
-        # Performance optimizations
-        'max_connections': 50,  # Increased connection pool
-        'socket_connect_timeout': 3,  # Faster connection timeout
-        'socket_timeout': 2,  # Faster operation timeout
-        'connection_pool_kwargs': {
-            'max_connections': 50,
-            'retry_on_timeout': True,
-            'socket_keepalive': True,
-            'socket_keepalive_options': {
-                'TCP_KEEPIDLE': 1,
-                'TCP_KEEPINTVL': 3,
-                'TCP_KEEPCNT': 5,
-            }
-        }
+        'health_check_interval': 30,
     },
     
-    # Optimized result backend transport options
+    # Simplified result backend transport options
     result_backend_transport_options={
-        'socket_keepalive': True,
-        'socket_keepalive_options': {
-            'TCP_KEEPIDLE': 1,
-            'TCP_KEEPINTVL': 3,
-            'TCP_KEEPCNT': 5,
-        },
         'retry_on_timeout': True,
-        'health_check_interval': 15,  # More frequent health checks
-        
-        # Performance optimizations
-        'max_connections': 30,  # Dedicated pool for results
-        'socket_connect_timeout': 3,
-        'socket_timeout': 2,
-        'connection_pool_kwargs': {
-            'max_connections': 30,
-            'retry_on_timeout': True,
-            'socket_keepalive': True,
-        }
+        'health_check_interval': 30,
     },
     
     # Additional performance settings
